@@ -7,16 +7,25 @@
 #include <math.h>
 
 #include <curl/curl.h>
+#include "expat.h"
 
 #define URL_LENGTH_MAX       255
 #define THREAD_NUM_MAX       10
 #define UPLOAD_EXT_LENGTH_MAX 5
 #define SPEEDTEST_TIME_MAX   10
+#define CUNTRY_NAME_MAX      64
 #define UPLOAD_EXTENSION_TAG "upload_extension"
 #define LATENCY_TXT_URL "/speedtest/latency.txt"
 
 #define INIT_DOWNLOAD_FILE_RESOLUTION 750
 #define FILE_350_SIZE                 245388
+
+#define MAX_ISP_NAME         255
+#define MAX_IPADDRESS_STRLEN 48
+#define MAX_CLOSEST_SERVER_NUM 5
+
+#define PI                      3.1415926
+#define EARTH_RADIUS            6378.137    
 
 #define OK  0
 #define NOK 1
@@ -38,11 +47,33 @@ struct web_buffer
     int   size;
 };
 
+struct client_info
+{
+    char   ip[MAX_IPADDRESS_STRLEN];
+    double lat;
+    double lon;
+    char   isp[MAX_ISP_NAME];
+};
+
+struct server_info
+{
+    char   url[URL_LENGTH_MAX];
+    double lat;
+    double lon;
+    char   country[CUNTRY_NAME_MAX];
+    int    id;
+    double distance;
+};
+
+int depth;
+struct client_info client;
+struct server_info servers[MAX_CLOSEST_SERVER_NUM];
+
 static int show_usage(char* argv[])
 {
     printf("%s:\n\t\t -p number of threads\n" \
                 "\t\t -l list all valid server\n" \
-                "\t\t -s specify mini speedtest server url\n", argv[0]);
+                "\t\t -s specify mini ookla server url\n", argv[0]);
     exit(0);
 }
 
@@ -56,6 +87,32 @@ static size_t write_data(void* ptr, size_t size, size_t nmemb, void *stream)
     return size * nmemb;
 }
 
+#if 1
+void *myrealloc(void *ptr, size_t size)
+ {
+   /* There might be a realloc() out there that doesn't like reallocing
+      NULL pointers, so we take care of it here */
+   if(ptr)
+     return realloc(ptr, size);
+   else
+     return malloc(size);
+ }
+ 
+ size_t
+ write_web_buf(void *ptr, size_t size, size_t nmemb, void *data)
+ {
+   size_t realsize = size * nmemb;
+   struct web_buffer *mem = (struct web_buffer *)data;
+ 
+   mem->data = (char *)realloc(mem->data, mem->size + realsize + 1);
+   if (mem->data) {
+     memcpy(&(mem->data[mem->size]), ptr, realsize);
+     mem->size += realsize;
+     mem->data[mem->size] = 0;
+   }
+   return realsize;
+ }
+#else
 static size_t write_web_buf(void* ptr, size_t size, size_t nmemb, void *data)
 {
     struct web_buffer* buf = (struct web_buffer*)data;
@@ -73,6 +130,102 @@ static size_t write_web_buf(void* ptr, size_t size, size_t nmemb, void *data)
     buf->data[buf->size] = 0;
     return size * nmemb;
 }
+#endif
+double radian(double d)
+{
+    return d * PI / 180.0;  
+}
+
+double get_distance(double lat1, double lng1, double lat2, double lng2)
+{
+    double radLat1 = radian(lat1);
+    double radLat2 = radian(lat2);
+    double a = radLat1 - radLat2;
+    double b = radian(lng1) - radian(lng2);
+    
+    double dst = 2 * asin((sqrt(pow(sin(a / 2), 2) + cos(radLat1) * cos(radLat2) * pow(sin(b / 2), 2) )));
+    
+    dst = dst * EARTH_RADIUS;
+    dst= round(dst * 10000) / 10000;
+    return dst;
+}
+
+static void XMLCALL start_element(void *userData, const char *el, const char **atts)
+{
+    int i;
+
+    if (depth == 1 && strcmp(el, "client") == 0) {
+      
+        struct client_info *p_client = (struct client_info *)userData;
+
+        for (i = 0; atts[i]; i += 2) { 
+            //printf(" %s \n", atts[i]);
+            if (strcmp(atts[i], "ip") == 0)
+              strcpy(p_client->ip, atts[i + 1]);
+            if (strcmp(atts[i], "isp") == 0)
+              strcpy(p_client->isp, atts[i + 1]);
+            if (strcmp(atts[i], "lat") == 0)
+              p_client->lat = atof(atts[i + 1]);
+            if (strcmp(atts[i], "lon") == 0)
+              p_client->lon = atof(atts[i + 1]);
+
+            //printf("client %s %s %lf %lf\n", p_client->ip, p_client->isp, p_client->lat, p_client->lon);
+        }
+    }
+
+    if (depth == 2 && strcmp(el, "server") == 0) {
+        struct server_info *p_server = (struct server_info *)userData;
+
+        for (i = 0; atts[i]; i += 2) { 
+            //printf(" %s \n", atts[i]);
+            if (strcmp(atts[i], "url") == 0)
+                strcpy(p_server->url, atts[i + 1]);
+            if (strcmp(atts[i], "country") == 0)
+                strcpy(p_server->country, atts[i + 1]);
+            if (strcmp(atts[i], "lat") == 0)
+                p_server->lat = atof(atts[i + 1]);
+            if (strcmp(atts[i], "lon") == 0)
+                p_server->lon = atof(atts[i + 1]);
+            if (strcmp(atts[i], "id") == 0)
+                p_server->id = atof(atts[i + 1]);
+        }
+    }
+    depth++;
+}
+
+static void XMLCALL end_element(void *userData, const char *name)
+{
+    depth--;
+
+    if (strcmp(name, "server") == 0) {
+        int     i;
+        struct server_info *p_server = (struct server_info *)userData;
+
+        p_server->distance = get_distance(client.lat, client.lon, p_server->lat, p_server->lon);
+
+        for (i = 0; i < MAX_CLOSEST_SERVER_NUM; i++) {
+            
+            if ( servers[i].url[0] == 0 ) {
+                
+                break;
+            }
+        }
+
+        if ( i == MAX_CLOSEST_SERVER_NUM ) {
+
+            for (i = 0; i <MAX_CLOSEST_SERVER_NUM; i++) {
+            
+                if (servers[i].distance >  p_server->distance) { 
+                    break;
+                }
+            }
+        }
+        if (i != MAX_CLOSEST_SERVER_NUM)
+            memcpy(&servers[i], p_server, sizeof(struct server_info));
+        memset(p_server, 0, sizeof(struct server_info));
+    }
+
+}
 
 static int do_latency(char *p_url)
 {
@@ -87,7 +240,7 @@ static int do_latency(char *p_url)
     
     curl_easy_setopt(curl, CURLOPT_URL, latency_url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3L);
     res = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
     curl_easy_cleanup(curl);
@@ -234,7 +387,6 @@ static int do_upload(struct thread_para* para)
     double size_upload;
 
     curl = curl_easy_init();
-
     
     curl_easy_setopt(curl, CURLOPT_URL, para->url);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -357,13 +509,110 @@ static int get_upload_extension(char *server, char *p_ext)
     return OK;
 }
 
+static int get_client_info(struct client_info *p_client)
+{
+    CURL *curl;
+    CURLcode res;
+    XML_Parser xml = XML_ParserCreate(NULL);
+    struct web_buffer web;
+    char* p = NULL;
+    int i;
+
+    memset(&web, 0, sizeof(web));
+
+    curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, "http://www.speedtest.net/speedtest-config.php");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 6.2; rv:22.0) Gecko/20130405 Firefox/22.0");
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    if (res != CURLE_OK) {
+
+        printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res)); 
+        return NOK;
+    }
+    XML_SetUserData(xml, p_client);
+    XML_SetElementHandler(xml, start_element, end_element);
+    if (XML_Parse(xml, web.data, web.size , 1) == XML_STATUS_ERROR) {
+
+        fprintf(stderr, "Parse client failed\n");
+        exit(-1);
+    }
+    free(web.data);
+    
+    return OK;
+}
+
+static int get_closest_server()
+{
+    CURL *curl;
+    CURLcode res;
+    XML_Parser xml = XML_ParserCreate(NULL);
+    struct web_buffer web;
+    char* p = NULL;
+    int i;
+    struct server_info server;
+
+    memset(&web, 0, sizeof(web));
+
+    curl = curl_easy_init();
+
+    curl_easy_setopt(curl, CURLOPT_URL, "http://www.speedtest.net/speedtest-servers.php");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 6.2; rv:22.0) Gecko/20130405 Firefox/22.0");
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    if (res != CURLE_OK) {
+        printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res)); 
+        return NOK;
+    }
+    XML_SetUserData(xml, &server);
+    depth = 0;
+    XML_SetElementHandler(xml, start_element, end_element);
+    if (XML_Parse(xml, web.data, web.size , 1) == XML_STATUS_ERROR) {
+
+        fprintf(stderr, "Parse servers list failed\n");
+        exit(-1);
+    }
+
+    return OK;
+}
+
+static int get_best_server(int *p_index)
+{
+    int     i;
+    double  minimum = DBL_MAX;
+    char    server[URL_LENGTH_MAX] = {0};
+
+    for (i = 0; i < MAX_CLOSEST_SERVER_NUM; i++) {
+
+        double latency;
+
+        sscanf(servers[i].url, "http://%[^/]speedtest/upload.%*s", server);
+        latency = test_latency(server);
+        if (minimum > latency ) {
+
+            minimum = latency;
+            *p_index = i;
+        }
+    }
+    if (minimum == DBL_MAX) 
+        return NOK;
+    return OK;
+}
+
 int main(int argc, char *argv[])
 {
     int     opt, num_thread;
     char    server_url[URL_LENGTH_MAX], ext[UPLOAD_EXT_LENGTH_MAX];
     double  latency, speed, download_speed, upload_speed;
-    int     dsize;
-
+    int     dsize, sindex;
+    
+    sindex      = -1;
     num_thread  = 4;
     dsize       = INIT_DOWNLOAD_FILE_RESOLUTION;
     memset(server_url, 0, sizeof(server_url));
@@ -392,17 +641,26 @@ int main(int argc, char *argv[])
     }
 
     if (server_url[0] == 0) {
-         show_usage(argv);
-         exit(-1);
+        printf("Retrieving speedtest.net configuration...\n");
+        get_client_info(&client);
+        printf("Retrieving speedtest.net server list...\n");
+        get_closest_server();
+        printf("Testing from %s (%s)...\n", client.isp, client.ip);
+        printf("Selecting best server based on ping...\n");
+        get_best_server(&sindex);
+        sscanf(servers[sindex].url, "http://%[^/]/speedtest/upload.%4s", server_url, ext);
+        printf("Bestest server: %s(%0.2fKM)\n", server_url, servers[sindex].distance);
     }
 
     /* Must initialize libcurl before any threads are started */
     curl_global_init(CURL_GLOBAL_ALL);
 
     latency = test_latency(server_url);
-    printf("Server latency is %lfms\n", latency);
+    if (latency == DBL_MAX) 
+        exit(-1);
+    printf("Server latency is %0.0fms\n", latency);
     
-    speed = test_download(server_url, num_thread, INIT_DOWNLOAD_FILE_RESOLUTION, 0);
+    speed = test_download(server_url, num_thread, dsize, 0);
     
     dsize = get_download_filename(speed, num_thread);
     fprintf(stderr, "Testing download speed");
@@ -410,12 +668,12 @@ int main(int argc, char *argv[])
     
     printf("Download speed: %0.2fMbps\n", ((download_speed*8)/(1024*1024)));
 
-    if (get_upload_extension(server_url, ext) != OK)
+    if (ext[0] == 0 && get_upload_extension(server_url, ext) != OK)
         exit(-1);
 
     speed = test_upload(server_url, num_thread, speed, ext, 0);
 
-    fprintf(stderr, "Testing uoload speed");
+    fprintf(stderr, "Testing upload speed");
     upload_speed = test_upload(server_url, num_thread, speed*SPEEDTEST_TIME_MAX, ext, 1);
 
     printf("Upload speed: %0.2fMbps\n", ((upload_speed*8)/(1024*1024)));
