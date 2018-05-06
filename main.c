@@ -30,6 +30,8 @@
 #define PI                      3.1415926
 #define EARTH_RADIUS            6378.137
 
+#define UPLOAD_CHRUNK_SIZE_MAX  512000 // Max upload chunk size 512K
+
 #define OK  0
 #define NOK 1
 
@@ -40,11 +42,14 @@ struct thread_para
 {
     pthread_t    tid;
     char         url[URL_LENGTH_MAX + 32];
-    double       result;
+    long         result;
     long         upload_size;
+    long         chunk_size;
     double       now;
+    char         finish;
     pthread_mutex_t lock;
 };
+
 
 struct web_buffer
 {
@@ -304,6 +309,7 @@ static void* do_download(void* data)
     curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME, &time2);
     //printf("Length is %lf %lf %lf %lf\n", length, time, time1, time2);
     p_para->result = length;
+    p_para->finish = 1;
     curl_easy_cleanup(curl);
     return NULL;
 }
@@ -319,7 +325,7 @@ static void loop_threads(struct thread_para *p_thread, int num_thread, double *s
         alive = 0;
 
         for (i = 0;i < num_thread; i++) {
-            if (p_thread[i].result == 0)
+            if (p_thread[i].finish == 0)
                 alive = 1;
             pthread_mutex_lock(&p_thread->lock);
             sum += p_thread[i].now;
@@ -458,77 +464,78 @@ static int test_download(char *p_url, int num_thread, int dsize, char init)
 }
 
 static size_t read_data(void* ptr, size_t size, size_t nmemb, void *userp)
-{
-    struct  thread_para* para = (struct thread_para*)userp;
-    int     length;
-    char    data[16284] = {0};
-
-    if (size * nmemb < 1 && para->upload_size)
-        return 0;
-#if 0
-    if (para->data == NULL) {
+{    
+        struct  thread_para* para = (struct thread_para*)userp;
+        int     length;
+        char    data[16284] = {0};
+    
+        if (size * nmemb < 1 && para->chunk_size)
+            return 0;
         int i;
-
-        para->data = (char*)malloc(10240);
-        para->data[0] = 'A';
-        for ( i = 1;i < 10240; i++) {
-
-            if (para->data[i - 1] + 1 > 'Z')
-                para->data[i - 1] = 'A';
-            para->data[i] = para->data[i - 1] + 1;
-
+        for (i = 0; i < 16284; i++) {
+        
+            data[i] = i%26 + 'a';
         }
-    }
-#endif
-    if (para->upload_size > size * nmemb) {
 
-        length = size * nmemb < 16284 ? size*nmemb : 16284;
-    }
-    else
-        length = para->upload_size < 16284 ? para->upload_size : 16284;
-    memcpy(ptr, data, length);
-
-    para->upload_size -= length;
-
-    pthread_mutex_lock(&para->lock);
-    para->now += length;
-    pthread_mutex_unlock(&para->lock);
-    return  length;
+        if (para->chunk_size > size * nmemb) {
+    
+            length = size * nmemb < 16284 ? size*nmemb : 16284;
+        }
+        else
+            length = para->chunk_size < 16284 ? para->chunk_size : 16284;
+        memcpy(ptr, data, length);
+    
+        para->chunk_size -= length;
+    
+        pthread_mutex_lock(&para->lock);
+        para->now += length;
+        pthread_mutex_unlock(&para->lock);
+        //printf("length = %d\n", length);
+        return  length;
 }
 
 static int do_upload(struct thread_para* para)
 {
-    char upload_url[URL_LENGTH_MAX + sizeof(LATENCY_TXT_URL)] = {0};
     CURL *curl;
     CURLcode res;
-    int i;
-    double size_upload;
-
+    long size = para->upload_size;
+    int loop = 1;
+	
+    if (size > UPLOAD_CHRUNK_SIZE_MAX)
+        loop = (size / UPLOAD_CHRUNK_SIZE_MAX) + 1;
+    
     curl = curl_easy_init();
-
+    
     curl_easy_setopt(curl, CURLOPT_URL, para->url);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_data);
     curl_easy_setopt(curl, CURLOPT_READDATA, para);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, NULL);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, NULL);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE , (curl_off_t)para->upload_size);
-    res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        curl_easy_cleanup(curl);
-        return NOK;
+    
+    while (loop) {
+
+        double size_upload;
+        
+        para->chunk_size = size - para->result> UPLOAD_CHRUNK_SIZE_MAX ? 
+                               UPLOAD_CHRUNK_SIZE_MAX : size - para->result;
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE , (curl_off_t)para->chunk_size);
+        
+        res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            fprintf(stderr, "Error: curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            curl_easy_cleanup(curl);
+            para->finish = 1;
+            return NOK;
+        }
+        curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD, &size_upload);
+        para->result += size_upload;
+        loop--;
     }
-    curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD, &size_upload);
-    if (size_upload == 0) { 
-        // for 413 Request Entity Too Large
-        printf("This server do not support large request");
-        para->result = 1;
-    } else
-        para->result = size_upload;
-    //printf("size upload = %lf\n", size_upload);
+    
     curl_easy_cleanup(curl);
+    para->finish = 1;
+    //printf("size upload = %lf\n", size_upload);
     return OK;
 }
 
@@ -548,6 +555,7 @@ static int test_upload(char *p_url, int num_thread, long size, char *p_ext, char
         memset(&paras[i], 0, sizeof(struct thread_para));
         sprintf(paras[i].url, "%s/speedtest/upload.%s", p_url, p_ext);
         paras[i].result = 0;
+        paras[i].finish = 0;
         paras[i].upload_size = size/num_thread;
         //printf("szeleft = %ld\n", paras[i].upload_size);
         error = pthread_create(&paras[i].tid, NULL, (void*)do_upload, (void*)&paras[i]);
