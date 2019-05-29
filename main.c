@@ -656,7 +656,7 @@ static int get_client_info(struct client_info *p_client)
     curl_easy_setopt(curl, CURLOPT_URL, "http://www.speedtest.net/speedtest-config.php");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 6.2; rv:22.0) Gecko/20130405 Firefox/22.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
     //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
