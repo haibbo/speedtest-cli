@@ -7,7 +7,7 @@
 #include <math.h>
 
 #include <curl/curl.h>
-#include "expat.h"
+#include <expat.h>
 
 #define URL_LENGTH_MAX       255
 #define THREAD_NUM_MAX       10
