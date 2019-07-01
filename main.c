@@ -653,10 +653,11 @@ static int get_client_info(struct client_info *p_client)
     memset(&web, 0, sizeof(web));
 
     curl = curl_easy_init();
-    curl_easy_setopt(curl, CURLOPT_URL, "http://www.speedtest.net/speedtest-config.php");
+    curl_easy_setopt(curl, CURLOPT_URL, "https://www.speedtest.net/speedtest-config.php");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
