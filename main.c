@@ -252,18 +252,19 @@ static int do_latency(char *p_url)
 
     curl = curl_easy_init();
 
-    sprintf(latency_url, "%s%s", p_url, LATENCY_TXT_URL);
+    sprintf(latency_url, "http://%s%s", p_url, LATENCY_TXT_URL);
     curl_easy_setopt(curl, CURLOPT_URL, latency_url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, NULL);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
     res = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK || response_code != 200) {
 
-        //printf("curl_easy_perform() failed: %s %ld\n", curl_easy_strerror(res), response_code);
+        printf("curl_easy_perform() failed: %s %ld\n", curl_easy_strerror(res), response_code);
         return NOK;
     }
     return OK;
@@ -297,6 +298,7 @@ static void* do_download(void* data)
     curl_easy_setopt(curl, CURLOPT_URL, p_para->url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, p_para);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
         printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
@@ -512,6 +514,7 @@ static int do_upload(struct thread_para* para)
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, NULL);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, NULL);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
     
     while (loop) {
 
