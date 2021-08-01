@@ -808,7 +808,7 @@ int main(int argc, char *argv[])
     if (ext[0] == 0 && get_upload_extension(server_url, ext) != OK)
         exit(-1);
 
-    speed = test_upload(server_url, num_thread, speed, ext, 0);
+    speed = test_upload(server_url, num_thread, speed/10, ext, 0);
 
     fprintf(stderr, "Testing upload speed");
     upload_speed = test_upload(server_url, num_thread, speed*SPEEDTEST_TIME_MAX, ext, 1);
