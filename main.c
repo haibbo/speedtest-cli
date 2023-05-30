@@ -251,8 +251,7 @@ static int do_latency(char *p_url)
     long response_code;
 
     curl = curl_easy_init();
-
-    sprintf(latency_url, "http://%s%s", p_url, LATENCY_TXT_URL);
+    sprintf(latency_url, "%s%s", p_url, LATENCY_TXT_URL);
     curl_easy_setopt(curl, CURLOPT_URL, latency_url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, NULL);
@@ -264,7 +263,7 @@ static int do_latency(char *p_url)
 
     if (res != CURLE_OK || response_code != 200) {
 
-        printf("curl_easy_perform() failed: %s %ld\n", curl_easy_strerror(res), response_code);
+        printf("curl_easy_perform() failed111: %s: %s %ld\n", p_url, curl_easy_strerror(res), response_code);
         return NOK;
     }
     return OK;
@@ -728,8 +727,15 @@ static int get_best_server(int *p_index)
     for (i = 0; i < MAX_CLOSEST_SERVER_NUM; i++) {
 
         double latency;
+        char protocol[10] = {0}; 
+        char hostname[URL_LENGTH_MAX] = {0};
+        char server[URL_LENGTH_MAX] = {0};
 
-        sscanf(servers[i].url, "http://%[^/]speedtest/upload.%*s", server);
+        if (sscanf(servers[i].url, "%[^:]://%[^/]/speedtest/upload.%*s",protocol, hostname) != 2) {
+            printf("Error: Failed to parse server URL: %s\n", servers[i].url);
+            continue;
+        }
+        sprintf(server, "%s://%s", protocol, hostname);
         latency = test_latency(server);
         if (minimum > latency ) {
 
