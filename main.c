@@ -330,10 +330,10 @@ static void loop_threads(struct thread_para *p_thread, int num_thread, double *s
         for (i = 0;i < num_thread; i++) {
             if (p_thread[i].finish == 0)
                 alive = 1;
-            pthread_mutex_lock(&p_thread->lock);
+            pthread_mutex_lock(&p_thread[i].lock);
             sum += p_thread[i].now;
             p_thread[i].now = 0;
-            pthread_mutex_unlock(&p_thread->lock);
+            pthread_mutex_unlock(&p_thread[i].lock);
             //printf("p_thread[i].now = %lf\n", p_thread[i].now);
         }
 
@@ -432,6 +432,7 @@ static int test_download(char *p_url, int num_thread, int dsize, char init)
     for ( i = 0; i < num_thread; i++) {
 
         memset(&paras[i], 0, sizeof(struct thread_para));
+        pthread_mutex_init(&paras[i].lock, NULL);
         sprintf(paras[i].url, "%s/speedtest/random%dx%d.jpg", p_url, dsize, dsize);
         paras[i].result = 0;
         error = pthread_create(&paras[i].tid, NULL, do_download, (void*)&paras[i]);
@@ -448,6 +449,7 @@ static int test_download(char *p_url, int num_thread, int dsize, char init)
     for (i = 0;i < num_thread; i++) {
         pthread_join(paras[i].tid, NULL);
         sum += paras[i].result;
+        pthread_mutex_destroy(&paras[i].lock);
     }
 
     if (init != 0) {
@@ -557,6 +559,7 @@ static int test_upload(char *p_url, int num_thread, long size, char *p_ext, char
 
     for ( i = 0; i < num_thread; i++) {
         memset(&paras[i], 0, sizeof(struct thread_para));
+        pthread_mutex_init(&paras[i].lock, NULL);
         sprintf(paras[i].url, "%s/speedtest/upload.%s", p_url, p_ext);
         paras[i].result = 0;
         paras[i].finish = 0;
@@ -574,6 +577,7 @@ static int test_upload(char *p_url, int num_thread, long size, char *p_ext, char
     for (i = 0;i < num_thread; i++) {
         pthread_join(paras[i].tid, NULL);
         sum += paras[i].result;
+        pthread_mutex_destroy(&paras[i].lock);
     }
     if (init != 0) {
 
@@ -633,15 +637,27 @@ static int get_upload_extension(char *server, char *p_ext)
     curl_easy_cleanup(curl);
     if (res != CURLE_OK) {
         printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        return NOK;
+        free(web.data);
+        strcpy(p_ext, "php");
+        return OK;
     }
+    if (web.data == NULL) {
+        fprintf(stderr, "Upload extension not found: empty response, defaulting to php\n");
+        free(web.data);
+        strcpy(p_ext, "php");
+        return OK;
+    }
+
     p = strstr(web.data, UPLOAD_EXTENSION_TAG);
     if (p == NULL ||
         sscanf(p + strlen(UPLOAD_EXTENSION_TAG), "%*[^a-zA-Z]%[a-zA-Z]", p_ext) <= 0) {
-        fprintf(stderr, "Upload extension not found\n");
-        return NOK;
+        fprintf(stderr, "Upload extension not found, defaulting to php\n");
+        free(web.data);
+        strcpy(p_ext, "php");
+        return OK;
     }
     printf("Upload extension: %s\n", p_ext);
+    free(web.data);
     return OK;
 }
 
