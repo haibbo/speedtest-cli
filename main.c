@@ -296,6 +296,8 @@ static void* do_download(void* data)
     curl = curl_easy_init();
 
     //printf("image url = %s\n", p_para->url);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_URL, p_para->url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, p_para);
@@ -509,6 +511,8 @@ static int do_upload(struct thread_para* para)
     
     curl = curl_easy_init();
     
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_URL, para->url);
     curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_data);
     curl_easy_setopt(curl, CURLOPT_READDATA, para);
@@ -625,6 +629,8 @@ static int get_upload_extension(char *server, char *p_ext)
 
     curl = curl_easy_init();
 
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_URL, server);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
@@ -657,6 +663,8 @@ static int get_client_info(struct client_info *p_client)
     memset(&web, 0, sizeof(web));
 
     curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_URL, "https://www.speedtest.net/speedtest-config.php");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
@@ -696,6 +704,8 @@ static int get_closest_server()
 
     curl = curl_easy_init();
 
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_URL, "http://www.speedtest.net/speedtest-servers.php");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
