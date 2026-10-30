@@ -47,6 +47,7 @@ struct thread_para
     long         chunk_size;
     double       now;
     char         finish;
+    int          error;
     pthread_mutex_t lock;
 };
 
@@ -289,6 +290,7 @@ static void* do_download(void* data)
 {
     CURL *curl;
     CURLcode res;
+    long response_code = 0;
     struct thread_para* p_para = (struct thread_para*)data;
     double length = 0;
     double time = 0, time1 = 0, time2;
@@ -304,7 +306,17 @@ static void* do_download(void* data)
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        printf("Download failed: %s: %s\n", p_para->url, curl_easy_strerror(res));
+        p_para->error = 1;
+        p_para->finish = 1;
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        printf("Download failed: %s: HTTP %ld\n", p_para->url, response_code);
+        p_para->error = 1;
+        p_para->finish = 1;
         curl_easy_cleanup(curl);
         return NULL;
     }
@@ -427,6 +439,7 @@ static int test_download(char *p_url, int num_thread, int dsize, char init)
     double speed = 0;
     double *instant_speed = NULL;
     int    speed_num = 0;
+    int    failed = 0;
 
     gettimeofday(&s_time, NULL);
     init_instant_speed(&instant_speed, &speed_num);
@@ -439,8 +452,10 @@ static int test_download(char *p_url, int num_thread, int dsize, char init)
         paras[i].result = 0;
         error = pthread_create(&paras[i].tid, NULL, do_download, (void*)&paras[i]);
 
-        if ( error != 0)
-            printf("Can't Run thread num %d, error %d\n", i, error);
+        if ( error != 0) {
+            fprintf(stderr, "Can't run thread %d: %d\n", i, error);
+            exit(-1);
+        }
     }
 
     if (init != 0)
@@ -450,8 +465,14 @@ static int test_download(char *p_url, int num_thread, int dsize, char init)
 
     for (i = 0;i < num_thread; i++) {
         pthread_join(paras[i].tid, NULL);
+        if (paras[i].error)
+            failed = 1;
         sum += paras[i].result;
         pthread_mutex_destroy(&paras[i].lock);
+    }
+    if (failed || sum <= 0) {
+        free(instant_speed);
+        return -1;
     }
 
     if (init != 0) {
@@ -505,6 +526,7 @@ static int do_upload(struct thread_para* para)
 {
     CURL *curl;
     CURLcode res;
+    long response_code = 0;
     long size = para->upload_size;
     int loop = 1;
 	
@@ -533,8 +555,17 @@ static int do_upload(struct thread_para* para)
         
         res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
-            fprintf(stderr, "Error: curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            fprintf(stderr, "Upload failed: %s: %s\n", para->url, curl_easy_strerror(res));
             curl_easy_cleanup(curl);
+            para->error = 1;
+            para->finish = 1;
+            return NOK;
+        }
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code != 200) {
+            fprintf(stderr, "Upload failed: %s: HTTP %ld\n", para->url, response_code);
+            curl_easy_cleanup(curl);
+            para->error = 1;
             para->finish = 1;
             return NOK;
         }
@@ -557,6 +588,7 @@ static int test_upload(char *p_url, int num_thread, long size, char *p_ext, char
     double sum = 0, speed = 0;
     double *instant_speed = NULL;
     int    speed_num = 0;
+    int    failed = 0;
     gettimeofday(&s_time, NULL);
 
     init_instant_speed(&instant_speed, &speed_num);
@@ -571,8 +603,10 @@ static int test_upload(char *p_url, int num_thread, long size, char *p_ext, char
         //printf("szeleft = %ld\n", paras[i].upload_size);
         error = pthread_create(&paras[i].tid, NULL, (void*)do_upload, (void*)&paras[i]);
 
-        if ( error != 0)
-            printf("Can't Run thread num %d, error %d\n", i, error);
+        if ( error != 0) {
+            fprintf(stderr, "Can't run thread %d: %d\n", i, error);
+            exit(-1);
+        }
     }
     if (init != 0)
     {
@@ -580,8 +614,14 @@ static int test_upload(char *p_url, int num_thread, long size, char *p_ext, char
     }
     for (i = 0;i < num_thread; i++) {
         pthread_join(paras[i].tid, NULL);
+        if (paras[i].error)
+            failed = 1;
         sum += paras[i].result;
         pthread_mutex_destroy(&paras[i].lock);
+    }
+    if (failed || sum <= 0) {
+        free(instant_speed);
+        return -1;
     }
     if (init != 0) {
 
@@ -812,14 +852,25 @@ int main(int argc, char *argv[])
     }
 
     if (server_url[0] == 0) {
+        char protocol[10] = {0};
+        char hostname[URL_LENGTH_MAX] = {0};
+
         printf("Retrieving speedtest.net configuration...\n");
         get_client_info(&client);
         printf("Retrieving speedtest.net server list...\n");
         get_closest_server();
         printf("Testing from %s (%s)...\n", client.isp, client.ip);
         printf("Selecting best server based on ping...\n");
-        get_best_server(&sindex);
-        sscanf(servers[sindex].url, "http://%[^/]/speedtest/upload.%4s", server_url, ext);
+        if (get_best_server(&sindex) != OK) {
+            fprintf(stderr, "Error: no reachable server found\n");
+            exit(-1);
+        }
+        if (sscanf(servers[sindex].url, "%9[^:]://%254[^/]/speedtest/upload.%4s",
+                   protocol, hostname, ext) != 3) {
+            fprintf(stderr, "Error: Failed to parse server URL: %s\n", servers[sindex].url);
+            exit(-1);
+        }
+        snprintf(server_url, sizeof(server_url), "%s://%s", protocol, hostname);
         printf("Bestest server: %s(%0.2fKM)\n", server_url, servers[sindex].distance);
     }
 
@@ -832,20 +883,38 @@ int main(int argc, char *argv[])
     printf("Server latency is %0.0fms\n", latency);
 
     speed = test_download(server_url, num_thread, dsize, 0);
+    if (speed < 0) {
+        fprintf(stderr, "Error: download test failed\n");
+        exit(-1);
+    }
 
     dsize = get_download_filename(speed, num_thread);
     fprintf(stderr, "Testing download speed");
     download_speed = test_download(server_url, num_thread, dsize, 1);
+    if (download_speed < 0) {
+        fprintf(stderr, "Error: download test failed\n");
+        exit(-1);
+    }
 
     printf("Download speed: %0.2fMbps\n", ((download_speed*8)/(1024*1024)));
 
-    if (ext[0] == 0 && get_upload_extension(server_url, ext) != OK)
+    if (ext[0] == 0 && get_upload_extension(server_url, ext) != OK) {
+        fprintf(stderr, "Error: failed to determine upload extension\n");
         exit(-1);
+    }
 
     speed = test_upload(server_url, num_thread, speed/10, ext, 0);
+    if (speed < 0) {
+        fprintf(stderr, "Error: upload test failed\n");
+        exit(-1);
+    }
 
     fprintf(stderr, "Testing upload speed");
     upload_speed = test_upload(server_url, num_thread, speed*SPEEDTEST_TIME_MAX, ext, 1);
+    if (upload_speed < 0) {
+        fprintf(stderr, "Error: upload test failed\n");
+        exit(-1);
+    }
 
     printf("Upload speed: %0.2fMbps\n", ((upload_speed*8)/(1024*1024)));
 
