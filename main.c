@@ -259,13 +259,22 @@ static int do_latency(char *p_url)
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    /* Some servers redirect latency.txt (usually HTTP 307); follow it so
+       they are not discarded during server selection. */
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     res = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
     curl_easy_cleanup(curl);
 
-    if (res != CURLE_OK || response_code != 200) {
+    if (res != CURLE_OK) {
 
-        printf("curl_easy_perform() failed111: %s: %s %ld\n", p_url, curl_easy_strerror(res), response_code);
+        printf("Latency probe failed: %s: %s\n", latency_url, curl_easy_strerror(res));
+        return NOK;
+    }
+    if (response_code != 200) {
+
+        printf("Latency probe failed: %s: HTTP %ld\n", latency_url, response_code);
         return NOK;
     }
     return OK;
@@ -302,6 +311,8 @@ static void* do_download(void* data)
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, p_para);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "haibbo speedtest-cli");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
         printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
@@ -638,6 +649,8 @@ static int get_upload_extension(char *server, char *p_ext)
     curl_easy_setopt(curl, CURLOPT_URL, server);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_web_buf);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &web);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
